@@ -25,19 +25,23 @@
           "rules": [
             {
               "value2": "photo_meal",
-              "output": 0
+              "output": 0,
+              "operation": "equal"
             },
             {
               "value2": "weekly_analysis",
-              "output": 1
+              "output": 1,
+              "operation": "equal"
             },
             {
               "value2": "chat",
-              "output": 2
+              "output": 2,
+              "operation": "equal"
             },
             {
               "value2": "portion_advice",
-              "output": 3
+              "output": 3,
+              "operation": "equal"
             }
           ]
         }
