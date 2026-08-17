@@ -403,6 +403,48 @@
         1200
       ],
       "id": "get-pro"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.PUBLIC_BASE_URL}}/api/v1/internal/users/reminders?kind=fasting",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.N8N_CALLBACK_TOKEN}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "GET reminders batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        600
+      ],
+      "id": "get-reminders-batch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{$json.tg_id}},\n  \"text\": \"{{$json.reminder_text}}\"\n}",
+        "options": {}
+      },
+      "name": "TG: send reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        600
+      ],
+      "id": "tg-send-reminders-node"
     }
   ],
   "connections": {
@@ -449,50 +491,6 @@
         ]
       ]
     },
-    "Claude: фото → BJU": {
-      "main": [
-        [
-          {
-            "node": "Format result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude: еженедельный анализ": {
-      "main": [
-        [
-          {
-            "node": "Format result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude: чат": {
-      "main": [
-        [
-          {
-            "node": "Format result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude: рекомендации по порциям": {
-      "main": [
-        [
-          {
-            "node": "Format result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Format result": {
       "main": [
         [
@@ -502,11 +500,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "Callback to bot": {
-      "main": [
-        []
       ]
     },
     "Cron: hourly (reminders)": {
@@ -531,11 +524,6 @@
         ]
       ]
     },
-    "TG: send reminders": {
-      "main": [
-        []
-      ]
-    },
     "Cron: daily 09:00 (admin digest)": {
       "main": [
         [
@@ -558,11 +546,6 @@
         ]
       ]
     },
-    "TG: send digest to admin": {
-      "main": [
-        []
-      ]
-    },
     "Cron: weekly AI analysis (Sun 20:00)": {
       "main": [
         [
@@ -574,9 +557,48 @@
         ]
       ]
     },
-    "GET all PRO users": {
+    "Claude: photo → BJU": {
       "main": [
-        []
+        [
+          {
+            "node": "Format result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: weekly analysis": {
+      "main": [
+        [
+          {
+            "node": "Format result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: chat": {
+      "main": [
+        [
+          {
+            "node": "Format result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: portion advice": {
+      "main": [
+        [
+          {
+            "node": "Format result",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
