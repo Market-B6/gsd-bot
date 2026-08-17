@@ -421,35 +421,35 @@
       "main": [
         [
           {
-            "node": "Claude: photo → BJU",
+            "node": "Claude: фото → BJU",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Claude: weekly analysis",
+            "node": "Claude: еженедельный анализ",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Claude: chat",
+            "node": "Claude: чат",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Claude: portion advice",
+            "node": "Claude: рекомендации по порциям",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Claude: photo → BJU": {
+    "Claude: фото → BJU": {
       "main": [
         [
           {
@@ -460,7 +460,7 @@
         ]
       ]
     },
-    "Claude: weekly analysis": {
+    "Claude: еженедельный анализ": {
       "main": [
         [
           {
@@ -471,7 +471,7 @@
         ]
       ]
     },
-    "Claude: chat": {
+    "Claude: чат": {
       "main": [
         [
           {
@@ -482,7 +482,7 @@
         ]
       ]
     },
-    "Claude: portion advice": {
+    "Claude: рекомендации по порциям": {
       "main": [
         [
           {
@@ -504,15 +504,36 @@
         ]
       ]
     },
+    "Callback to bot": {
+      "main": [
+        []
+      ]
+    },
     "Cron: hourly (reminders)": {
       "main": [
         [
           {
-            "node": "GET users to remind",
+            "node": "GET reminders batch",
             "type": "main",
             "index": 0
           }
         ]
+      ]
+    },
+    "GET reminders batch": {
+      "main": [
+        [
+          {
+            "node": "TG: send reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TG: send reminders": {
+      "main": [
+        []
       ]
     },
     "Cron: daily 09:00 (admin digest)": {
@@ -537,6 +558,11 @@
         ]
       ]
     },
+    "TG: send digest to admin": {
+      "main": [
+        []
+      ]
+    },
     "Cron: weekly AI analysis (Sun 20:00)": {
       "main": [
         [
@@ -546,6 +572,11 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "GET all PRO users": {
+      "main": [
+        []
       ]
     }
   },
