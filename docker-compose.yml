@@ -31,8 +31,15 @@ services:
     build: .
     env_file:
       - .env
+    # Bound to localhost on purpose. Docker publishes ports via its own iptables
+    # rules and bypasses UFW, so "0.0.0.0:8000" is reachable from the internet
+    # even when UFW says incoming is denied. Expose it through nginx instead.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    # The host's provider blocks most Telegram IP ranges; 149.154.167.220 is the
+    # one that answers. Remove this once the network allows normal DNS results.
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,6 +48,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./migrations:/app/migrations
+      - ./scripts:/app/scripts
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:

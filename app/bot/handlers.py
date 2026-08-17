@@ -14,7 +14,23 @@ from app.models import User, Meal, GlucoseReading, InsulinDose, Timer, GlucoseTy
 from app.services.analytics import log_event, get_stats
 import redis.asyncio as redis
 
-bot = Bot(token=settings.BOT_TOKEN)
+def _build_bot() -> Bot:
+    """Build the Bot, routing through a proxy when TELEGRAM_PROXY_URL is set.
+
+    Some hosting providers block outbound traffic to api.telegram.org. In that
+    case the bot talks to Telegram through a proxy while user data stays in the
+    local database.
+    """
+    if settings.TELEGRAM_PROXY_URL:
+        from aiogram.client.session.aiohttp import AiohttpSession
+        return Bot(
+            token=settings.BOT_TOKEN,
+            session=AiohttpSession(proxy=settings.TELEGRAM_PROXY_URL),
+        )
+    return Bot(token=settings.BOT_TOKEN)
+
+
+bot = _build_bot()
 redis_client = redis.from_url(settings.REDIS_URL)
 storage = RedisStorage(redis_client)
 dp = Dispatcher(storage=storage)
@@ -27,6 +43,7 @@ class MealState(StatesGroup):
 
 class GlucoseState(StatesGroup):
     waiting_for_value = State()
+    waiting_for_type = State()
     waiting_for_time = State()
 
 class InsulinState(StatesGroup):
@@ -58,6 +75,14 @@ def get_time_keyboard():
         inline_keyboard=[
             [InlineKeyboardButton(text="⏰ Сейчас", callback_data="time_now")],
             [InlineKeyboardButton(text="🕐 Другое время", callback_data="time_custom")],
+        ]
+    )
+
+def get_glucose_type_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌅 Натощак", callback_data="gtype_fasting")],
+            [InlineKeyboardButton(text="🍽 После еды", callback_data="gtype_postmeal")],
         ]
     )
 
@@ -108,6 +133,16 @@ async def cmd_start(message: Message, state: FSMContext):
                 full_name=message.from_user.full_name
             )
             session.add(user)
+            await session.flush()
+
+            # Referral code from /start ref_XXXX
+            parts = (message.text or "").split(maxsplit=1)
+            if len(parts) == 2 and parts[1].startswith("ref_"):
+                code = parts[1][4:].strip()
+                if code:
+                    from app.services.referral import attach_referrer
+                    await attach_referrer(session, user, code)
+
             await session.commit()
 
             await message.answer(
@@ -292,13 +327,22 @@ async def glucose_value(message: Message, state: FSMContext):
         return
 
     await state.update_data(value=value)
-    await message.answer("Когда замеряли?", reply_markup=get_time_keyboard())
+    await message.answer("Тип замера:", reply_markup=get_glucose_type_keyboard())
+    await state.set_state(GlucoseState.waiting_for_type)
+
+@router.callback_query(GlucoseState.waiting_for_type, F.data.startswith("gtype_"))
+async def glucose_type_selected(callback: CallbackQuery, state: FSMContext):
+    gtype = callback.data.replace("gtype_", "")
+    await state.update_data(glucose_type=gtype)
+    await callback.message.edit_text("Когда замеряли?", reply_markup=get_time_keyboard())
     await state.set_state(GlucoseState.waiting_for_time)
+    await callback.answer()
 
 @router.callback_query(GlucoseState.waiting_for_time, F.data == "time_now")
 async def glucose_time_now(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     value = data.get("value")
+    glucose_type = GlucoseType(data.get("glucose_type"))
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == callback.from_user.id))
@@ -311,40 +355,25 @@ async def glucose_time_now(callback: CallbackQuery, state: FSMContext):
         tz = pytz.timezone(user.timezone)
         now = datetime.now(tz).replace(tzinfo=None)
 
-        recent_time = now - timedelta(minutes=90)
-        timer_result = await session.execute(
-            select(Timer).where(
-                Timer.user_id == user.id,
-                Timer.start_time >= recent_time,
-                Timer.is_notified == False
-            ).order_by(Timer.start_time.desc()).limit(1)
-        )
-        timer = timer_result.scalar_one_or_none()
-
-        glucose_type = GlucoseType.POSTMEAL if timer else GlucoseType.FASTING
         is_normal = value <= 7.0 if glucose_type == GlucoseType.POSTMEAL else value <= 5.1
 
         reading = GlucoseReading(
             user_id=user.id,
-            meal_id=timer.meal_id if timer else None,
             datetime=now,
             value=value,
             type=glucose_type,
             is_normal=is_normal
         )
         session.add(reading)
-
-        if timer:
-            timer.is_notified = True
-
         await log_event(session, user.id, "glucose")
         await session.commit()
 
         status = "✅ в норме" if is_normal else "⚠️ выше нормы"
         norm_text = "до 7.0" if glucose_type == GlucoseType.POSTMEAL else "до 5.1"
+        type_label = "после еды" if glucose_type == GlucoseType.POSTMEAL else "натощак"
 
         await callback.message.edit_text(
-            f"Записала: {value} — {status}\n"
+            f"Записала: {value} ({type_label}) — {status}\n"
             f"(норма для ГСД: {norm_text})"
         )
         await callback.message.answer("Готово!", reply_markup=get_main_keyboard())
@@ -378,42 +407,27 @@ async def glucose_time_manual(message: Message, state: FSMContext):
 
         data = await state.get_data()
         value = data.get("value")
+        glucose_type = GlucoseType(data.get("glucose_type"))
 
-        recent_time = parsed - timedelta(minutes=90)
-        timer_result = await session.execute(
-            select(Timer).where(
-                Timer.user_id == user.id,
-                Timer.start_time >= recent_time,
-                Timer.start_time <= parsed,
-                Timer.is_notified == False
-            ).order_by(Timer.start_time.desc()).limit(1)
-        )
-        timer = timer_result.scalar_one_or_none()
-
-        glucose_type = GlucoseType.POSTMEAL if timer else GlucoseType.FASTING
         is_normal = value <= 7.0 if glucose_type == GlucoseType.POSTMEAL else value <= 5.1
 
         reading = GlucoseReading(
             user_id=user.id,
-            meal_id=timer.meal_id if timer else None,
             datetime=parsed,
             value=value,
             type=glucose_type,
             is_normal=is_normal
         )
         session.add(reading)
-
-        if timer:
-            timer.is_notified = True
-
         await log_event(session, user.id, "glucose")
         await session.commit()
 
         status = "✅ в норме" if is_normal else "⚠️ выше нормы"
         norm_text = "до 7.0" if glucose_type == GlucoseType.POSTMEAL else "до 5.1"
+        type_label = "после еды" if glucose_type == GlucoseType.POSTMEAL else "натощак"
 
         await message.answer(
-            f"Записала на {parsed.strftime('%d.%m %H:%M')}: {value} — {status}\n"
+            f"Записала на {parsed.strftime('%d.%m %H:%M')}: {value} ({type_label}) — {status}\n"
             f"(норма для ГСД: {norm_text})",
             reply_markup=get_main_keyboard()
         )
@@ -812,4 +826,8 @@ async def cmd_reply(message: Message):
         await message.answer(f"Ошибка: {e}")
 
 dp.include_router(router)
+
+# PRO features router
+from app.bot.handlers_pro import pro_router  # noqa: E402
+dp.include_router(pro_router)
 

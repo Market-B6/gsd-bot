@@ -5,7 +5,8 @@ sqlalchemy==2.0.36
 alembic==1.14.0
 asyncpg==0.30.0
 redis==5.2.0
-pydantic==2.10.2
+# Capped below 2.10: aiogram 3.15 requires pydantic<2.10.
+pydantic==2.9.2
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
 openpyxl==3.1.5
@@ -14,3 +15,6 @@ python-multipart==0.0.17
 httpx==0.28.1
 pytz==2024.2
 apscheduler==3.10.4
+matplotlib==3.9.2
+Pillow==11.0.0
+aiohttp-socks==0.10.1

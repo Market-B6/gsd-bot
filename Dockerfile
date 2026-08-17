@@ -2,8 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# fonts-dejavu-core is required: PDF reports render Cyrillic and reportlab's
+# built-in Helvetica cannot. Without it doctor reports come out as garbage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -68,20 +68,79 @@ async def generate_diary_text(session: AsyncSession, user: User, days: int = 7) 
         data = dates[date_key]
         text += f"**{date_key.strftime('%d.%m.%Y')}**\n"
 
-        for meal in data['meals']:
-            time_str = meal.datetime.strftime('%H:%M')
-            text += f"• {time_str} 🍽 {meal.description}\n"
+        # Fasting glucose first
+        fasting = [r for r in data['glucose'] if r.type.value == 'fasting']
+        fasting.sort(key=lambda r: r.datetime)
+        if fasting:
+            r = fasting[0]
+            status = "✅" if r.is_normal else "⚠️"
+            text += f"  🩸 {r.datetime.strftime('%H:%M')} Натощак: {r.value} {status}\n"
+        else:
+            text += f"  🩸 Натощак: —\n"
 
-        for reading in data['glucose']:
-            time_str = reading.datetime.strftime('%H:%M')
-            status = "✅" if reading.is_normal else "⚠️"
-            type_icon = "🩸" if reading.type.value == "fasting" else "🔬"
-            text += f"• {time_str} {type_icon} {reading.value} {status}\n"
+        # Meals sorted by time, each as a block with linked glucose and insulin
+        day_meals = sorted(data['meals'], key=lambda m: m.datetime)
+        postmeal_readings = [r for r in data['glucose'] if r.type.value == 'postmeal']
+        insulin_doses_day = sorted(data['insulin'], key=lambda d: d.datetime)
 
-        for dose in data['insulin']:
-            time_str = dose.datetime.strftime('%H:%M')
-            type_text = "короткий" if dose.type.value == "short" else "длинный"
-            text += f"• {time_str} 💉 {dose.units} Ед ({type_text})\n"
+        # Track which readings/doses are used
+        used_readings = set()
+        used_doses = set()
+
+        for meal in day_meals:
+            text += f"\n  🍽 {meal.datetime.strftime('%H:%M')} {meal.description}\n"
+
+            # Find linked glucose (by meal_id or closest postmeal within 3h after meal)
+            linked_reading = None
+            for r in postmeal_readings:
+                if r.id in used_readings:
+                    continue
+                if r.meal_id == meal.id:
+                    linked_reading = r
+                    break
+            if not linked_reading:
+                for r in postmeal_readings:
+                    if r.id in used_readings:
+                        continue
+                    delta = (r.datetime - meal.datetime).total_seconds()
+                    if 0 < delta <= 10800:
+                        linked_reading = r
+                        break
+
+            if linked_reading:
+                used_readings.add(linked_reading.id)
+                status = "✅" if linked_reading.is_normal else "⚠️"
+                text += f"  🔬 {linked_reading.datetime.strftime('%H:%M')} Сахар: {linked_reading.value} {status}\n"
+            else:
+                text += f"  🔬 Сахар: —\n"
+
+            # Find closest insulin within 1h before to 2h after meal
+            linked_dose = None
+            for d in insulin_doses_day:
+                if d.id in used_doses:
+                    continue
+                delta = (d.datetime - meal.datetime).total_seconds()
+                if -3600 <= delta <= 7200:
+                    linked_dose = d
+                    break
+
+            if linked_dose:
+                used_doses.add(linked_dose.id)
+                type_text = "кор." if linked_dose.type.value == "short" else "длин."
+                text += f"  💉 {linked_dose.datetime.strftime('%H:%M')} Инсулин: {linked_dose.units} Ед ({type_text})\n"
+            else:
+                text += f"  💉 Инсулин: —\n"
+
+        # Orphan insulin/glucose not linked to any meal
+        orphan_readings = [r for r in postmeal_readings if r.id not in used_readings]
+        orphan_doses = [d for d in insulin_doses_day if d.id not in used_doses]
+        if orphan_readings or orphan_doses:
+            for r in orphan_readings:
+                status = "✅" if r.is_normal else "⚠️"
+                text += f"\n  🔬 {r.datetime.strftime('%H:%M')} Сахар: {r.value} {status}\n"
+            for d in orphan_doses:
+                type_text = "кор." if d.type.value == "short" else "длин."
+                text += f"  💉 {d.datetime.strftime('%H:%M')} Инсулин: {d.units} Ед ({type_text})\n"
 
         text += "\n"
 
@@ -173,7 +232,11 @@ async def generate_excel_export(session: AsyncSession, user: User, days: int = 7
             'data': dose
         })
 
-    events.sort(key=lambda x: x['datetime'])
+    def excel_sort_key(event):
+        is_fasting = (event['type'] == 'glucose' and event['data'].type.value == 'fasting')
+        return (event['datetime'].date(), 0 if is_fasting else 1, event['datetime'])
+
+    events.sort(key=excel_sort_key)
 
     # Fill rows
     row = 6
