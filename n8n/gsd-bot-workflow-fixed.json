@@ -1,0 +1,332 @@
+{
+  "name": "GSD Bot — Full Orchestration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gsd-ai",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "Webhook: AI request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "id": "webhook-ai",
+      "webhookId": "gsd-ai"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json.task_type}}",
+        "rules": {
+          "rules": [
+            {"value2": "photo_meal", "output": 0},
+            {"value2": "weekly_analysis", "output": 1},
+            {"value2": "chat", "output": 2},
+            {"value2": "portion_advice", "output": 3}
+          ]
+        }
+      },
+      "name": "Route by task_type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300],
+      "id": "switch-router"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIBECODE_BASE_URL}}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL}}\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты нутрициолог, специализирующийся на гестационном сахарном диабете (ГСД). По фото блюда оцени состав, БЖУ (граммы), ХЕ (хлебные единицы), гликемический индекс и риск скачка сахара для беременной с ГСД (low/medium/high). Верни ТОЛЬКО валидный JSON без комментариев, в формате: {\\\"dish\\\": string, \\\"protein_g\\\": number, \\\"fat_g\\\": number, \\\"carb_g\\\": number, \\\"xe\\\": number, \\\"gi\\\": number, \\\"risk_level\\\": \\\"low\\\"|\\\"medium\\\"|\\\"high\\\", \\\"advice\\\": string}. Совет пиши коротко, по-русски.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": [\n        { \"type\": \"text\", \"text\": \"Проанализируй блюдо на фото.\" },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": { \"url\": \"data:{{$json.data.mime || 'image/jpeg'}};base64,{{$json.data.image_b64}}\" }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Claude: photo → BJU",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 180],
+      "id": "claude-photo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIBECODE_BASE_URL}}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL}}\",\n  \"max_tokens\": 2048,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты нутрициолог, специализирующийся на гестационном сахарном диабете. Проанализируй недельные данные беременной: замеры сахара, приёмы пищи, инсулин. Дай персональную рекомендацию на русском языке (до 500 слов): что идёт хорошо, где риски, как скорректировать рацион и дозы.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Вот данные за неделю:\\n{{$json.data.weekly_summary}}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Claude: weekly analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "id": "claude-weekly"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIBECODE_BASE_URL}}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL}}\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты нутрициолог-ассистент для беременных с ГСД. Отвечай на вопросы кратко, по-русски, с учётом гестационного сахарного диабета.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{$json.data.user_question}}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Claude: chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 420],
+      "id": "claude-chat"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIBECODE_BASE_URL}}/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL}}\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты нутрициолог. Дай короткий совет (до 200 слов) по размеру порций для беременной с ГСД, исходя из её данных.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Мои данные: вес {{$json.data.weight_kg}} кг, срок {{$json.data.weeks}} недель, средний сахар {{$json.data.avg_glucose}}. Как мне порционировать?\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Claude: portion advice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 540],
+      "id": "claude-portion"
+    },
+    {
+      "parameters": {
+        "functionCode": "const raw = $input.first().json;\nconst webhook = $('Webhook: AI request').first().json;\n\nif (raw && raw.error) {\n  return [{ json: { task_id: webhook.task_id, status: 'failed', error: String(raw.error.message || raw.error), result: null, callback_url: webhook.callback_url, callback_token: webhook.callback_token } }];\n}\n\nlet text = raw?.choices?.[0]?.message?.content;\nif (Array.isArray(text)) { text = text.map(p => p?.text || '').join(''); }\nif (text === undefined || text === null) { text = raw?.content?.[0]?.text ?? raw; }\n\nlet result;\nif (typeof text === 'string') {\n  const m = text.match(/\\{[\\s\\S]*\\}/);\n  if (m) { try { result = JSON.parse(m[0]); } catch (e) { result = { answer: text }; } }\n  else { result = { answer: text }; }\n} else {\n  result = text;\n}\nreturn [{ json: { task_id: webhook.task_id, status: 'done', result, callback_url: webhook.callback_url, callback_token: webhook.callback_token } }];"
+      },
+      "name": "Format result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "id": "format-result"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.callback_url}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$json.callback_token}}"},
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"task_id\": \"{{$json.task_id}}\",\n  \"status\": \"{{$json.status}}\",\n  \"result\": {{JSON.stringify($json.result)}}\n}",
+        "options": {}
+      },
+      "name": "Callback to bot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "id": "callback-bot"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 1}]
+        }
+      },
+      "name": "Cron: hourly (reminders)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 600],
+      "id": "cron-hourly"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.PUBLIC_BASE_URL}}/api/v1/internal/users/reminders?kind=fasting",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.N8N_CALLBACK_TOKEN}}"}
+          ]
+        },
+        "options": {}
+      },
+      "name": "GET users to remind",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 600],
+      "id": "get-reminders"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{$json.tg_id}},\n  \"text\": \"{{$json.reminder_text}}\"\n}",
+        "options": {}
+      },
+      "name": "TG: send reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600],
+      "id": "tg-send-reminders"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 9 * * *"}]
+        }
+      },
+      "name": "Cron: daily 09:00 (admin digest)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 780],
+      "id": "cron-daily"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.PUBLIC_BASE_URL}}/api/v1/internal/admin/digest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.N8N_CALLBACK_TOKEN}}"}
+          ]
+        },
+        "options": {}
+      },
+      "name": "GET admin digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 780],
+      "id": "get-digest"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{$env.ADMIN_TG_ID}},\n  \"text\": \"{{$json.digest_text}}\",\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "name": "TG: send digest to admin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 780],
+      "id": "tg-digest"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 20 * * 0"}]
+        }
+      },
+      "name": "Cron: weekly AI analysis (Sun 20:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 960],
+      "id": "cron-weekly"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.PUBLIC_BASE_URL}}/api/v1/internal/users/pro",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.N8N_CALLBACK_TOKEN}}"}
+          ]
+        },
+        "options": {}
+      },
+      "name": "GET all PRO users",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 960],
+      "id": "get-pro-users"
+    }
+  ],
+  "connections": {
+    "Webhook: AI request": {
+      "main": [[{"node": "Route by task_type", "type": "main", "index": 0}]]
+    },
+    "Route by task_type": {
+      "main": [
+        [{"node": "Claude: photo → BJU", "type": "main", "index": 0}],
+        [{"node": "Claude: weekly analysis", "type": "main", "index": 0}],
+        [{"node": "Claude: chat", "type": "main", "index": 0}],
+        [{"node": "Claude: portion advice", "type": "main", "index": 0}]
+      ]
+    },
+    "Claude: photo → BJU": {
+      "main": [[{"node": "Format result", "type": "main", "index": 0}]]
+    },
+    "Claude: weekly analysis": {
+      "main": [[{"node": "Format result", "type": "main", "index": 0}]]
+    },
+    "Claude: chat": {
+      "main": [[{"node": "Format result", "type": "main", "index": 0}]]
+    },
+    "Claude: portion advice": {
+      "main": [[{"node": "Format result", "type": "main", "index": 0}]]
+    },
+    "Format result": {
+      "main": [[{"node": "Callback to bot", "type": "main", "index": 0}]]
+    },
+    "Cron: hourly (reminders)": {
+      "main": [[{"node": "GET users to remind", "type": "main", "index": 0}]]
+    },
+    "GET users to remind": {
+      "main": [[{"node": "TG: send reminders", "type": "main", "index": 0}]]
+    },
+    "Cron: daily 09:00 (admin digest)": {
+      "main": [[{"node": "GET admin digest", "type": "main", "index": 0}]]
+    },
+    "GET admin digest": {
+      "main": [[{"node": "TG: send digest to admin", "type": "main", "index": 0}]]
+    },
+    "Cron: weekly AI analysis (Sun 20:00)": {
+      "main": [[{"node": "GET all PRO users", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["gsd-bot", "production"]
+}
