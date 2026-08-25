@@ -745,6 +745,7 @@ async def more_button(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="⚖️ Записать вес", callback_data="more_weight")],
         [InlineKeyboardButton(text="🩺 Давление (АД)", callback_data="more_bp")],
         [InlineKeyboardButton(text="👶 Шевеления", callback_data="more_kicks")],
+        [InlineKeyboardButton(text="📖 Рецепты", callback_data="more_recipes")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="more_help")],
         [InlineKeyboardButton(text="✉️ Написать нам", callback_data="more_contact")],
         [InlineKeyboardButton(text="⭐ PRO-подписка", callback_data="more_pro")],
@@ -764,6 +765,14 @@ async def cb_more_bp(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     from app.bot.handlers_pro import cmd_bp
     await cmd_bp(cb.message, state)
+
+
+@router.callback_query(F.data == "more_recipes")
+async def cb_more_recipes(cb: CallbackQuery):
+    # Переиспользуем готовый экран категорий: он сам редактирует сообщение
+    # и отвечает на колбэк, поэтому cb.message в message-хендлер не передаём.
+    from app.bot.handlers_recipes import recipes_categories_callback
+    await recipes_categories_callback(cb)
 
 
 @router.callback_query(F.data == "more_kicks")
@@ -946,6 +955,10 @@ dp.include_router(router)
 # PRO features router
 from app.bot.handlers_pro import pro_router  # noqa: E402
 dp.include_router(pro_router)
+
+# Recipes router
+from app.bot.handlers_recipes import router as recipes_router  # noqa: E402
+dp.include_router(recipes_router)
 
 
 # TEST: n8n webhook test
