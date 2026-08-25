@@ -158,8 +158,10 @@ async def recipes_category(callback: CallbackQuery):
         )
         user = result.scalar_one_or_none()
 
-        # Получаем первый рецепт категории
-        query = select(Recipe).where(Recipe.category == category).order_by(Recipe.id)
+        # Получаем первый рецепт категории.
+        # limit(1) обязателен: scalar_one_or_none() падает с MultipleResultsFound,
+        # если запрос вернул больше одной строки.
+        query = select(Recipe).where(Recipe.category == category).order_by(Recipe.id).limit(1)
         result = await session.execute(query)
         recipe = result.scalar_one_or_none()
 
