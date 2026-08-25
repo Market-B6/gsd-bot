@@ -1,12 +1,19 @@
 """Обработчики для раздела Рецепты."""
+import logging
+from pathlib import Path
+
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
+)
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, func
 from app.database import AsyncSessionLocal
 from app.models import Recipe, User, SubscriptionTier
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -23,9 +30,20 @@ def get_categories_keyboard():
     )
 
 
-def get_recipe_card_keyboard(recipe_id: int, has_prev: bool, has_next: bool, category: str):
-    """Навигация по карточкам рецептов."""
+def get_recipe_card_keyboard(recipe_id: int, has_prev: bool, has_next: bool, category: str,
+                             with_full: bool = False):
+    """Навигация по карточкам рецептов.
+
+    with_full=True добавляет кнопку раскрытия полного рецепта — она нужна,
+    когда под фото показана только компактная подпись.
+    """
     buttons = []
+
+    if with_full:
+        buttons.append([
+            InlineKeyboardButton(text="👨‍🍳 Показать рецепт",
+                                 callback_data=f"recipe_full_{recipe_id}_{category}")
+        ])
 
     nav_row = []
     if has_prev:
@@ -38,8 +56,43 @@ def get_recipe_card_keyboard(recipe_id: int, has_prev: bool, has_next: bool, cat
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+# Метки нагрузки из импортёра — короткие, пользователю непонятно, о чём речь.
+# Разворачиваем в явную формулировку про сахар в крови.
+TAG_LABELS = {
+    "🟢 низкая нагрузка": "🟢 Низкая нагрузка — сахар почти не поднимет",
+    "🟡 средняя нагрузка": "🟡 Средняя нагрузка — сахар поднимет умеренно",
+}
+
+
+def format_recipe_short(recipe: Recipe) -> str:
+    """Компактная подпись под фото: влезает в лимит caption Telegram (1024)."""
+    text = f"📖 **{recipe.title}**\n\n"
+
+    if recipe.carb_g:
+        text += f"🍞 Углеводы: {recipe.carb_g} г"
+        if recipe.xe:
+            text += f" — {recipe.xe} ХЕ (хлебных единиц)"
+        text += "\n"
+    if recipe.protein_g:
+        text += f"🥚 Белки: {recipe.protein_g} г\n"
+    if recipe.fat_g:
+        text += f"🧈 Жиры: {recipe.fat_g} г\n"
+    if recipe.kcal:
+        text += f"🔥 {recipe.kcal} ккал\n"
+
+    labels = [
+        TAG_LABELS.get(tag.strip(), tag.strip())
+        for tag in (recipe.tags or "").split(",")
+        if tag.strip() and not tag.strip().startswith("spoon:")
+    ]
+    if labels:
+        text += "\n" + "\n".join(labels)
+
+    return text[:1024]
+
+
 def format_recipe_card(recipe: Recipe) -> str:
-    """Форматирует карточку рецепта."""
+    """Полная карточка рецепта."""
     text = f"📖 **{recipe.title}**\n\n"
 
     # БЖУ и калории
@@ -52,7 +105,7 @@ def format_recipe_card(recipe: Recipe) -> str:
         if recipe.carb_g:
             text += f"• Углеводы: {recipe.carb_g} г"
             if recipe.xe:
-                text += f" ({recipe.xe} ХЕ)"
+                text += f" — {recipe.xe} ХЕ (хлебных единиц)"
             text += "\n"
         if recipe.kcal:
             text += f"• Калории: {recipe.kcal} ккал\n"
@@ -75,11 +128,67 @@ def format_recipe_card(recipe: Recipe) -> str:
             text += f"{step}. {line}\n"
             step += 1
 
-    # Теги
-    if recipe.tags:
-        text += f"\n🏷 {recipe.tags}"
+    # Теги. В поле лежит и служебный маркер источника (spoon:<id>), по которому
+    # импортёр ищет дубли — пользователю он не нужен, показываем только метки.
+    visible_tags = [
+        TAG_LABELS.get(tag.strip(), tag.strip())
+        for tag in (recipe.tags or "").split(",")
+        if tag.strip() and not tag.strip().startswith("spoon:")
+    ]
+    if visible_tags:
+        text += "\n" + "\n".join(visible_tags)
 
     return text
+
+
+async def show_recipe_card(callback: CallbackQuery, recipe: Recipe,
+                           has_prev: bool, has_next: bool, category: str):
+    """Показывает карточку: фото + компактная подпись, полный текст — по кнопке.
+
+    edit_text не умеет превратить текстовое сообщение в фото, поэтому при наличии
+    файла старое сообщение удаляется и отправляется новое с картинкой.
+    Если фото нет или Telegram его не принял — остаётся текстовый вид.
+    """
+    photo_path = Path(recipe.photo_url) if recipe.photo_url else None
+
+    if photo_path and photo_path.is_file():
+        keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category,
+                                            with_full=True)
+        try:
+            await callback.message.answer_photo(
+                FSInputFile(photo_path),
+                caption=format_recipe_short(recipe),
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            try:
+                await callback.message.delete()
+            except TelegramBadRequest:
+                pass  # сообщение старше 48 часов — Telegram удалять не даёт
+            return
+        except TelegramBadRequest as e:
+            logger.warning("Фото рецепта %s не отправилось (%s), показываю текст", recipe.id, e)
+
+    keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category)
+    await callback.message.edit_text(format_recipe_card(recipe),
+                                     parse_mode="Markdown", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("recipe_full_"))
+async def recipe_full(callback: CallbackQuery):
+    """Полный текст рецепта отдельным сообщением — под фото он не влезает."""
+    parts = callback.data.split("_")
+    recipe_id, category = int(parts[2]), parts[3]
+
+    async with AsyncSessionLocal() as session:
+        recipe = await session.get(Recipe, recipe_id)
+
+    if not recipe:
+        await callback.answer("Рецепт не найден", show_alert=True)
+        return
+
+    await callback.message.answer(format_recipe_card(recipe), parse_mode="Markdown")
+    await callback.answer()
 
 
 @router.message(F.text == "📖 Рецепты", StateFilter("*"))
@@ -198,10 +307,7 @@ async def recipes_category(callback: CallbackQuery):
         )
         has_next = next_result.scalar_one_or_none() is not None
 
-    text = format_recipe_card(recipe)
-    keyboard = get_recipe_card_keyboard(recipe.id, False, has_next, category)
-
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await show_recipe_card(callback, recipe, False, has_next, category)
     await callback.answer()
 
 
@@ -268,10 +374,7 @@ async def recipe_next(callback: CallbackQuery):
         )
         has_next = next_result.scalar_one_or_none() is not None
 
-    text = format_recipe_card(recipe)
-    keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category)
-
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await show_recipe_card(callback, recipe, has_prev, has_next, category)
     await callback.answer()
 
 
@@ -338,10 +441,7 @@ async def recipe_prev(callback: CallbackQuery):
         )
         has_next = next_result.scalar_one_or_none() is not None
 
-    text = format_recipe_card(recipe)
-    keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category)
-
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await show_recipe_card(callback, recipe, has_prev, has_next, category)
     await callback.answer()
 
 
