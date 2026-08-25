@@ -59,8 +59,13 @@ MENU_BUTTONS = frozenset({
     "💉 Инсулин",
     "📊 Мой дневник",
     "📖 Рецепты",
+    "💬 Задать вопрос Миле",
+    "⚙️ Настройки",
+    "📈 Статистика",
+    "🎁 PRO подписка",
     "❓ Помощь",
     "✉️ Написать нам",
+    "⬅️ Назад",
 })
 
 # Keyboards
@@ -69,8 +74,18 @@ def get_main_keyboard():
         keyboard=[
             [KeyboardButton(text="🍽 Приём пищи"), KeyboardButton(text="🩸 Замер сахара")],
             [KeyboardButton(text="💉 Инсулин"), KeyboardButton(text="📊 Мой дневник")],
-            [KeyboardButton(text="📖 Рецепты")],
-            [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="✉️ Написать нам")],
+            [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="📋 Ещё")],
+        ],
+        resize_keyboard=True
+    )
+
+def get_more_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📖 Рецепты"), KeyboardButton(text="💬 Задать вопрос Миле")],
+            [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="📈 Статистика")],
+            [KeyboardButton(text="🎁 PRO подписка"), KeyboardButton(text="✉️ Написать нам")],
+            [KeyboardButton(text="⬅️ Назад")],
         ],
         resize_keyboard=True
     )
@@ -837,6 +852,17 @@ async def cmd_reply(message: Message):
         await message.answer(f"✅ Отправлено пользователю {target_id}")
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
+
+# More menu
+@router.message(F.text == "📋 Ещё", StateFilter("*"))
+async def more_button(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("📋 Дополнительное меню:", reply_markup=get_more_keyboard())
+
+@router.message(F.text == "⬅️ Назад", StateFilter("*"))
+async def back_button(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=get_main_keyboard())
 
 dp.include_router(router)
 
