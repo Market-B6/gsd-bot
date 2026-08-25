@@ -51,12 +51,25 @@ class InsulinState(StatesGroup):
     waiting_for_type = State()
     waiting_for_time = State()
 
+# Menu buttons — если во время ввода пользователь жмёт одну из них,
+# это не данные для текущего шага, а переключение сценария.
+MENU_BUTTONS = frozenset({
+    "🍽 Приём пищи",
+    "🩸 Замер сахара",
+    "💉 Инсулин",
+    "📊 Мой дневник",
+    "📖 Рецепты",
+    "❓ Помощь",
+    "✉️ Написать нам",
+})
+
 # Keyboards
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🍽 Приём пищи"), KeyboardButton(text="🩸 Замер сахара")],
             [KeyboardButton(text="💉 Инсулин"), KeyboardButton(text="📊 Мой дневник")],
+            [KeyboardButton(text="📖 Рецепты")],
             [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="✉️ Написать нам")],
         ],
         resize_keyboard=True
@@ -201,7 +214,7 @@ async def meal_button(message: Message, state: FSMContext):
     await message.answer("Что ели? Опишите приём пищи:")
     await state.set_state(MealState.waiting_for_description)
 
-@router.message(MealState.waiting_for_description)
+@router.message(MealState.waiting_for_description, ~F.text.in_(MENU_BUTTONS))
 async def meal_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await message.answer("Когда это было?", reply_markup=get_time_keyboard())
@@ -258,7 +271,7 @@ async def meal_time_custom(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@router.message(MealState.waiting_for_time)
+@router.message(MealState.waiting_for_time, ~F.text.in_(MENU_BUTTONS))
 async def meal_time_manual(message: Message, state: FSMContext):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == message.from_user.id))
@@ -318,7 +331,7 @@ async def glucose_button(message: Message, state: FSMContext):
     await message.answer("Введите значение сахара (например: 5.5):")
     await state.set_state(GlucoseState.waiting_for_value)
 
-@router.message(GlucoseState.waiting_for_value)
+@router.message(GlucoseState.waiting_for_value, ~F.text.in_(MENU_BUTTONS))
 async def glucose_value(message: Message, state: FSMContext):
     try:
         value = float(message.text.replace(',', '.'))
@@ -388,7 +401,7 @@ async def glucose_time_custom(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@router.message(GlucoseState.waiting_for_time)
+@router.message(GlucoseState.waiting_for_time, ~F.text.in_(MENU_BUTTONS))
 async def glucose_time_manual(message: Message, state: FSMContext):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == message.from_user.id))
@@ -440,7 +453,7 @@ async def insulin_button(message: Message, state: FSMContext):
     await message.answer("Сколько единиц инсулина?")
     await state.set_state(InsulinState.waiting_for_units)
 
-@router.message(InsulinState.waiting_for_units)
+@router.message(InsulinState.waiting_for_units, ~F.text.in_(MENU_BUTTONS))
 async def insulin_units(message: Message, state: FSMContext):
     try:
         units = float(message.text.replace(',', '.'))
@@ -502,7 +515,7 @@ async def insulin_time_custom(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@router.message(InsulinState.waiting_for_time)
+@router.message(InsulinState.waiting_for_time, ~F.text.in_(MENU_BUTTONS))
 async def insulin_time_manual(message: Message, state: FSMContext):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == message.from_user.id))
@@ -788,7 +801,7 @@ async def support_button(message: Message, state: FSMContext):
     )
     await state.set_state(SupportState.waiting_for_message)
 
-@router.message(SupportState.waiting_for_message)
+@router.message(SupportState.waiting_for_message, ~F.text.in_(MENU_BUTTONS))
 async def support_send(message: Message, state: FSMContext):
     user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
     try:
@@ -830,4 +843,8 @@ dp.include_router(router)
 # PRO features router
 from app.bot.handlers_pro import pro_router  # noqa: E402
 dp.include_router(pro_router)
+
+# Recipes router
+from app.bot.handlers_recipes import router as recipes_router  # noqa: E402
+dp.include_router(recipes_router)
 
