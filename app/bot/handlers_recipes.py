@@ -141,6 +141,31 @@ def format_recipe_card(recipe: Recipe) -> str:
     return text
 
 
+async def replace_message(callback: CallbackQuery, text: str,
+                          reply_markup: InlineKeyboardMarkup | None = None) -> None:
+    """Заменяет сообщение текстом, чем бы оно ни было.
+
+    Карточка рецепта приходит как фото, а у сообщения с фото нет текста —
+    edit_text на нём падает («there is no text in the message to edit»),
+    и если это происходит до callback.answer(), Telegram крутит загрузку.
+    Поэтому для фото удаляем сообщение и отправляем новое.
+    """
+    if callback.message.photo:
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass  # старше 48 часов — Telegram удалять не даёт
+        return
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            return
+        logger.warning("edit_text не удался (%s), отправляю новым сообщением", e)
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
 async def show_recipe_card(callback: CallbackQuery, recipe: Recipe,
                            has_prev: bool, has_next: bool, category: str):
     """Показывает карточку: фото + компактная подпись, полный текст — по кнопке.
@@ -170,8 +195,7 @@ async def show_recipe_card(callback: CallbackQuery, recipe: Recipe,
             logger.warning("Фото рецепта %s не отправилось (%s), показываю текст", recipe.id, e)
 
     keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category)
-    await callback.message.edit_text(format_recipe_card(recipe),
-                                     parse_mode="Markdown", reply_markup=keyboard)
+    await replace_message(callback, format_recipe_card(recipe), keyboard)
 
 
 @router.callback_query(F.data.startswith("recipe_full_"))
@@ -251,7 +275,7 @@ async def recipes_categories_callback(callback: CallbackQuery):
         f"⭐️ {pro_count} PRO-рецептов (обед/ужин) доступны по подписке"
     )
 
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_categories_keyboard())
+    await replace_message(callback, text, get_categories_keyboard())
     await callback.answer()
 
 
@@ -280,7 +304,8 @@ async def recipes_category(callback: CallbackQuery):
 
         # Проверка PRO-доступа
         if recipe.is_pro and (not user or user.subscription_tier == SubscriptionTier.FREE):
-            await callback.message.edit_text(
+            await replace_message(
+                callback,
                 f"🔒 **{recipe.title}**\n\n"
                 "Этот рецепт доступен только по подписке PRO.\n\n"
                 "⭐️ **Что даёт PRO:**\n"
@@ -289,11 +314,10 @@ async def recipes_category(callback: CallbackQuery):
                 "• Персональные рекомендации\n"
                 "• Экспорт отчётов для врача\n\n"
                 "Подробнее: /pro",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="⭐️ Оформить PRO", callback_data="subscribe_pro")],
                     [InlineKeyboardButton(text="🔙 К категориям", callback_data="recipes_categories")],
-                ])
+                ]),
             )
             await callback.answer()
             return
@@ -339,7 +363,8 @@ async def recipe_next(callback: CallbackQuery):
 
         # PRO-гейт
         if recipe.is_pro and (not user or user.subscription_tier == SubscriptionTier.FREE):
-            await callback.message.edit_text(
+            await replace_message(
+                callback,
                 f"🔒 **{recipe.title}**\n\n"
                 "Этот рецепт доступен только по подписке PRO.\n\n"
                 "⭐️ **Что даёт PRO:**\n"
@@ -348,11 +373,10 @@ async def recipe_next(callback: CallbackQuery):
                 "• Персональные рекомендации\n"
                 "• Экспорт отчётов для врача\n\n"
                 "Подробнее: /pro",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="⭐️ Оформить PRO", callback_data="subscribe_pro")],
                     [InlineKeyboardButton(text="🔙 К категориям", callback_data="recipes_categories")],
-                ])
+                ]),
             )
             await callback.answer()
             return
@@ -406,7 +430,8 @@ async def recipe_prev(callback: CallbackQuery):
 
         # PRO-гейт (на всякий случай, хотя возврат назад обычно безопасен)
         if recipe.is_pro and (not user or user.subscription_tier == SubscriptionTier.FREE):
-            await callback.message.edit_text(
+            await replace_message(
+                callback,
                 f"🔒 **{recipe.title}**\n\n"
                 "Этот рецепт доступен только по подписке PRO.\n\n"
                 "⭐️ **Что даёт PRO:**\n"
@@ -415,11 +440,10 @@ async def recipe_prev(callback: CallbackQuery):
                 "• Персональные рекомендации\n"
                 "• Экспорт отчётов для врача\n\n"
                 "Подробнее: /pro",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="⭐️ Оформить PRO", callback_data="subscribe_pro")],
                     [InlineKeyboardButton(text="🔙 К категориям", callback_data="recipes_categories")],
-                ])
+                ]),
             )
             await callback.answer()
             return
