@@ -87,7 +87,9 @@ async def cmd_pro(message: Message):
         "• 📄 PDF-отчёт для врача с графиками\n"
         "• 🍽 База рецептов ГСД с ХЕ/БЖУ\n\n"
         "Бесплатно навсегда: дневник, статистика, экспорт в Excel,\n"
-        "вес, давление, шевеления.\n"
+        "вес, давление, шевеления.\n\n"
+        "📱 **Важно**: оплата работает только с телефона (iOS/Android).\n"
+        "Если вы сейчас на компьютере — откройте бота на мобильном.\n"
     )
     await message.answer(text, reply_markup=_pro_menu_kb(), parse_mode="Markdown")
 
@@ -117,7 +119,10 @@ async def cb_subscribe_pro(cb: CallbackQuery):
         await s.commit()
 
     await cb.message.answer(
-        f"⭐ **PRO-подписка**\n\n{status_text}\n\nВыберите действие ниже:",
+        f"⭐ **PRO-подписка**\n\n{status_text}\n\n"
+        "📱 **Важно**: оплата работает только с телефона (iOS/Android).\n"
+        "Если вы сейчас на компьютере — откройте бота на мобильном.\n\n"
+        "Выберите действие ниже:",
         reply_markup=_pro_menu_kb(),
         parse_mode="Markdown",
     )
