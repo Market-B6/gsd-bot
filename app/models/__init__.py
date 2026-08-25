@@ -78,6 +78,7 @@ class User(Base):
 
     # Quota counters (reset monthly)
     ai_photos_used_month = Column(Integer, default=0)
+    ai_chat_used_month = Column(Integer, default=0)
     ai_photos_extra = Column(Integer, default=0)  # bought packs
     pdf_reports_used_month = Column(Integer, default=0)
     quota_reset_at = Column(DateTime, nullable=True)
@@ -235,6 +236,7 @@ class Recipe(Base):
     xe = Column(Float, nullable=True)  # bread units
     kcal = Column(Integer, nullable=True)
     gi = Column(Integer, nullable=True)  # glycemic index
+    glycemic_load = Column(Float, nullable=True)  # per serving
     is_pro = Column(Boolean, default=False, index=True)
     photo_url = Column(String, nullable=True)
     tags = Column(String, nullable=True)  # comma-separated

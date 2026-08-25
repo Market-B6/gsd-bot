@@ -26,6 +26,10 @@ from app.services import ai_client
 from app.services.analytics import log_event
 from app.config import settings
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 pro_router = Router()
 
 
@@ -49,7 +53,6 @@ async def _get_user(tg_id: int) -> User | None:
 def _pro_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"⭐ Месяц · {settings.PRICE_SUB_MONTHLY_XTR}⭐", callback_data="buy:sub_monthly")],
-        [InlineKeyboardButton(text=f"⭐ Год · {settings.PRICE_SUB_YEARLY_XTR}⭐ (выгода 30%)", callback_data="buy:sub_yearly")],
         [InlineKeyboardButton(text="🎁 Активировать пробный период (7 дн)", callback_data="trial")],
         [InlineKeyboardButton(text="🧾 Разовые покупки", callback_data="shop")],
         [InlineKeyboardButton(text="👥 Пригласить подругу", callback_data="referral")],
@@ -60,8 +63,8 @@ def _shop_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"📄 PDF-отчёт врачу · {settings.PRICE_PDF_REPORT_XTR}⭐", callback_data="buy:pdf_report")],
         [InlineKeyboardButton(text=f"📸 50 AI-фото · {settings.PRICE_AI_PHOTO_PACK_XTR}⭐", callback_data="buy:ai_photo_pack")],
-        [InlineKeyboardButton(text=f"🎓 Курс «Жизнь с ГСД» · {settings.PRICE_COURSE_XTR}⭐", callback_data="buy:course")],
-        [InlineKeyboardButton(text=f"👨‍⚕️ Консультация · {settings.PRICE_CONSULTATION_XTR}⭐", callback_data="buy:consultation")],
+        [InlineKeyboardButton(text="🎓 Курс «Жизнь с ГСД» · скоро", callback_data="buy:course")],
+        [InlineKeyboardButton(text="👨‍⚕️ Консультация врача · скоро", callback_data="buy:consultation")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="pro_menu")],
     ])
 
@@ -76,15 +79,15 @@ async def cmd_pro(message: Message):
         f"⭐ **PRO подписка**\n\n"
         f"{sub_svc.subscription_status_text(user)}\n\n"
         "Что даёт PRO:\n"
-        "• 📸 Безлимит AI-распознавание блюд по фото (БЖУ, ХЕ, риск скачка)\n"
-        "• 📊 AI-анализ дневника с персональными советами\n"
+        "• 📸 100 фото-анализов блюд в месяц (в FREE — 5)\n"
+        "• 💬 Общение с Милой без ограничений (в FREE — 10 сообщений)\n"
+        "• 📊 AI-анализ дневника за неделю с советами\n"
+        "• 🎯 Конкретные порции: сколько чего можно\n"
         "• ⏰ Умные напоминания и вечерние сводки\n"
         "• 📄 PDF-отчёт для врача с графиками\n"
-        "• 🍽 База 200+ рецептов ГСД с ХЕ/БЖУ\n"
-        "• 💬 Чат с AI-нутрициологом\n"
-        "• 🎯 AI-подбор безопасных порций\n"
-        "• 👶 Постнатальное сопровождение и напоминания об ОГТТ\n"
-        "• 👪 Семейный доступ и кабинет для врача\n"
+        "• 🍽 База рецептов ГСД с ХЕ/БЖУ\n\n"
+        "Бесплатно навсегда: дневник, статистика, экспорт в Excel,\n"
+        "вес, давление, шевеления.\n"
     )
     await message.answer(text, reply_markup=_pro_menu_kb(), parse_mode="Markdown")
 
@@ -124,6 +127,24 @@ async def cb_trial(cb: CallbackQuery):
 @pro_router.callback_query(F.data.startswith("buy:"))
 async def cb_buy(cb: CallbackQuery):
     product_key = cb.data.split(":", 1)[1]
+    if product_key == "course":
+        await cb.answer()
+        await cb.message.answer(
+            "🎓 Курс «Жизнь с ГСД» \u2014 готовим!\n\n"
+            "10 коротких уроков: что такое ГСД, как считать ХЕ, "
+            "что делать при высоком сахаре, питание, подготовка к родам.\n\n"
+            "Напишем вам, когда откроем."
+        )
+        return
+    if product_key == "consultation":
+        await cb.answer()
+        await cb.message.answer(
+            "👨\u200D⚕️ Консультации специалистов \u2014 скоро!\n\n"
+            "Сейчас подключаем эндокринологов и нутрициологов, "
+            "которые ведут беременных с ГСД.\n\n"
+            "Напишем вам, когда появятся первые врачи."
+        )
+        return
     try:
         product = ProductType(product_key)
     except ValueError:
@@ -142,6 +163,21 @@ async def cb_buy(cb: CallbackQuery):
 @pro_router.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     from app.bot.handlers import bot
+    from app.models import Payment, PaymentStatus
+
+    async with AsyncSessionLocal() as s:
+        pay = (await s.execute(
+            select(Payment).where(Payment.invoice_payload == q.invoice_payload)
+        )).scalar_one_or_none()
+
+    if pay is None or pay.status == PaymentStatus.PAID:
+        logger.error("pre_checkout: payload %r rejected (found=%s)", q.invoice_payload, pay is not None)
+        await bot.answer_pre_checkout_query(
+            q.id, ok=False,
+            error_message="Счёт устарел. Откройте /pro и создайте новый.",
+        )
+        return
+
     await bot.answer_pre_checkout_query(q.id, ok=True)
 
 
@@ -161,6 +197,19 @@ async def on_successful_payment(message: Message):
                 await ref_svc.grant_referral_rewards(s, user)
             await log_event(s, user.id, f"paid:{product.value}")
         await s.commit()
+
+    if product is None:
+        logger.error(
+            "PAYMENT NOT APPLIED: charge_id=%s payload=%s amount=%s",
+            sp.telegram_payment_charge_id, sp.invoice_payload, sp.total_amount,
+        )
+        await message.answer(
+            "⚠️ Платёж прошёл, но активировать покупку не удалось.\n\n"
+            f"Напишите нам, код платежа: `{sp.telegram_payment_charge_id}`\n"
+            "Мы всё активируем вручную или вернём звёзды.",
+            parse_mode="Markdown",
+        )
+        return
 
     if product in (ProductType.SUB_MONTHLY, ProductType.SUB_YEARLY):
         await message.answer(
@@ -361,7 +410,7 @@ async def on_photo(message: Message):
             return
         if not await sub_svc.can_use_ai_photo(s, user):
             await message.answer(
-                "📸 AI-распознавание доступно 3 раза в месяц в FREE.\n"
+                "📸 AI-распознавание доступно 5 раз в месяц в FREE.\n"
                 "Купите PRO или пачку из 50 фото: /pro"
             )
             return
@@ -374,23 +423,26 @@ async def on_photo(message: Message):
         await bot.download(photo.file_id, destination=buf)
         image_b64 = base64.b64encode(buf.getvalue()).decode()
 
+        placeholder = await message.answer(
+            "📸 Анализирую блюдо... результат придёт через 5-15 секунд"
+        )
         await ai_client.analyze_meal_photo(
-            s, user.id, file_id=photo.file_id, image_b64=image_b64, mime="image/jpeg"
+            s, user.id, file_id=photo.file_id, image_b64=image_b64, mime="image/jpeg",
+            placeholder_message_id=placeholder.message_id,
         )
         await sub_svc.consume_ai_photo(s, user)
         await log_event(s, user.id, "ai_photo")
         await s.commit()
-    await message.answer("📸 Анализирую блюдо... результат придёт через 5-15 секунд")
 
 
 # ---------- AI chat ----------
 @pro_router.message(Command("ask"))
+@pro_router.message(F.text == "💬 Спросить Милу")
 async def cmd_ask(message: Message, state: FSMContext):
     user = await _get_user(message.from_user.id)
-    if not user or not sub_svc.is_pro(user):
-        await message.answer("💬 Чат с AI-нутрициологом доступен в PRO. /pro")
+    if not user:
         return
-    await message.answer("💬 Задайте вопрос AI-нутрициологу (например: «Можно ли манго?»)")
+    await message.answer("💬 Задайте вопрос Миле (например: «Можно ли манго?»)")
     await state.set_state(PROStates.chat_question)
 
 
@@ -401,21 +453,37 @@ async def ask_go(message: Message, state: FSMContext):
         user = (await s.execute(select(User).where(User.tg_id == message.from_user.id))).scalar_one_or_none()
         if not user:
             return
+        if not await sub_svc.can_use_ai_chat(s, user):
+            await message.answer(
+                "💬 Бесплатно доступно 10 сообщений Миле в месяц — они закончились.\n"
+                "В PRO — общение без ограничений: /pro"
+            )
+            await s.commit()
+            await state.clear()
+            return
         # Minimal context: last 7 days summary
         context = {"lang": "ru", "user_id": user.id}
-        await ai_client.chat_query(s, user.id, q, context)
+        placeholder = await message.answer("💭 Думаю...")
+        await ai_client.chat_query(
+            s, user.id, q, context, placeholder_message_id=placeholder.message_id
+        )
+        await sub_svc.consume_ai_chat(s, user)
         await s.commit()
     await state.clear()
-    await message.answer("💭 Думаю...")
 
 
 # ---------- AI weekly analysis ----------
-@pro_router.message(Command("analysis"))
-async def cmd_analysis(message: Message):
-    user = await _get_user(message.from_user.id)
+async def _do_analysis(tg_id: int, target: Message) -> None:
+    """Shared by /analysis command and the diary inline button.
+
+    tg_id is passed explicitly: for a callback, target.from_user is the bot,
+    so the pressing user must come from CallbackQuery.from_user.
+    """
+    user = await _get_user(tg_id)
     if not user or not sub_svc.is_pro(user):
-        await message.answer("📊 AI-анализ недели доступен в PRO. /pro")
+        await target.answer("📊 AI-анализ недели доступен в PRO. /pro")
         return
+    message = target
     async with AsyncSessionLocal() as s:
         # pull diary
         import httpx
@@ -428,9 +496,84 @@ async def cmd_analysis(message: Message):
                 diary = r.json() if r.status_code == 200 else {}
         except Exception:
             diary = {}
-        await ai_client.weekly_analysis(s, user.id, diary)
+        placeholder = await message.answer("📊 Готовлю анализ вашей недели...")
+        await ai_client.weekly_analysis(
+            s, user.id, diary, placeholder_message_id=placeholder.message_id
+        )
         await s.commit()
-    await message.answer("📊 Готовлю анализ вашей недели...")
+
+
+@pro_router.message(Command("analysis"))
+async def cmd_analysis(message: Message):
+    await _do_analysis(message.from_user.id, message)
+
+
+@pro_router.callback_query(F.data == "diary_analysis")
+async def cb_diary_analysis(cb: CallbackQuery):
+    await cb.answer()
+    await _do_analysis(cb.from_user.id, cb.message)
+
+
+# ---------- PDF report for doctor ----------
+async def _do_pdf_report(tg_id: int, target: Message) -> None:
+    """Shared by /report command and the diary inline button.
+
+    tg_id is explicit: on a callback target.from_user is the bot.
+    """
+    from aiogram.types import BufferedInputFile
+    from app.services.pdf_report import generate_pdf_report
+
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(
+            select(User).where(User.tg_id == tg_id)
+        )).scalar_one_or_none()
+        if not user:
+            await target.answer("Ошибка. Нажмите /start")
+            return
+
+        if not await sub_svc.can_use_pdf(s, user):
+            await s.commit()
+            await target.answer(
+                "\U0001F4C4 Бесплатный PDF-отчёт \u2014 один в месяц, он уже использован.\n\n"
+                f"Купить ещё один: {settings.PRICE_PDF_REPORT_XTR}\u2b50 в разделе /pro \u2192 "
+                "Разовые покупки.\nИли оформите PRO \u2014 отчёты без ограничений."
+            )
+            return
+
+        note = await target.answer("\U0001F4C4 Собираю отчёт с графиками...")
+        try:
+            pdf = await generate_pdf_report(s, user, days=28)
+        except Exception as e:
+            logger.exception("PDF generation failed for user %s", user.id)
+            await note.edit_text(
+                "\u26A0\ufe0f Не удалось собрать отчёт. Попробуйте позже или напишите нам."
+            )
+            return
+
+        await sub_svc.consume_pdf(s, user)
+        await log_event(s, user.id, "pdf_report")
+        await s.commit()
+
+    filename = f"gsd_report_{datetime.now().strftime('%d%m%Y')}.pdf"
+    await target.answer_document(
+        BufferedInputFile(pdf.read(), filename=filename),
+        caption="\U0001F4C4 Отчёт за 4 недели \u2014 можно показать врачу",
+    )
+    try:
+        await note.delete()
+    except Exception:
+        pass
+
+
+@pro_router.message(Command("report"))
+async def cmd_report(message: Message):
+    await _do_pdf_report(message.from_user.id, message)
+
+
+@pro_router.callback_query(F.data == "diary_pdf")
+async def cb_diary_pdf(cb: CallbackQuery):
+    await cb.answer()
+    await _do_pdf_report(cb.from_user.id, cb.message)
 
 
 # ---------- Postpartum birth registration ----------

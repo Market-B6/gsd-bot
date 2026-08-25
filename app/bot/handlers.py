@@ -1,6 +1,6 @@
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, StateFilter
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.redis import RedisStorage
@@ -51,21 +51,13 @@ class InsulinState(StatesGroup):
     waiting_for_type = State()
     waiting_for_time = State()
 
-# Menu buttons — если во время ввода пользователь жмёт одну из них,
-# это не данные для текущего шага, а переключение сценария.
 MENU_BUTTONS = frozenset({
     "🍽 Приём пищи",
     "🩸 Замер сахара",
     "💉 Инсулин",
     "📊 Мой дневник",
-    "📖 Рецепты",
-    "💬 Задать вопрос Миле",
-    "⚙️ Настройки",
-    "📈 Статистика",
-    "🎁 PRO подписка",
-    "❓ Помощь",
-    "✉️ Написать нам",
-    "⬅️ Назад",
+    "💬 Спросить Милу",
+    "📋 Ещё",
 })
 
 # Keyboards
@@ -74,18 +66,7 @@ def get_main_keyboard():
         keyboard=[
             [KeyboardButton(text="🍽 Приём пищи"), KeyboardButton(text="🩸 Замер сахара")],
             [KeyboardButton(text="💉 Инсулин"), KeyboardButton(text="📊 Мой дневник")],
-            [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="📋 Ещё")],
-        ],
-        resize_keyboard=True
-    )
-
-def get_more_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📖 Рецепты"), KeyboardButton(text="💬 Задать вопрос Миле")],
-            [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="📈 Статистика")],
-            [KeyboardButton(text="🎁 PRO подписка"), KeyboardButton(text="✉️ Написать нам")],
-            [KeyboardButton(text="⬅️ Назад")],
+            [KeyboardButton(text="💬 Спросить Милу"), KeyboardButton(text="📋 Ещё")],
         ],
         resize_keyboard=True
     )
@@ -677,7 +658,9 @@ async def diary_button(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="📋 Сегодня", callback_data="diary_today")],
             [InlineKeyboardButton(text="📋 Неделя", callback_data="diary_week")],
             [InlineKeyboardButton(text="📈 Моя статистика", callback_data="diary_stats")],
+            [InlineKeyboardButton(text="📄 PDF-отчёт врачу", callback_data="diary_pdf")],
             [InlineKeyboardButton(text="📎 Excel для врача", callback_data="diary_excel")],
+            [InlineKeyboardButton(text="🤖 AI-анализ недели (PRO)", callback_data="diary_analysis")],
         ]
     )
     await message.answer("📊 Дневник — что показать?", reply_markup=keyboard)
@@ -754,6 +737,103 @@ async def diary_excel(callback: CallbackQuery):
     await callback.answer()
 
 # Help for users
+@router.message(F.text == "📋 Ещё", StateFilter("*"))
+async def more_button(message: Message, state: FSMContext):
+    await state.clear()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚖️ Записать вес", callback_data="more_weight")],
+        [InlineKeyboardButton(text="🩺 Давление (АД)", callback_data="more_bp")],
+        [InlineKeyboardButton(text="👶 Шевеления", callback_data="more_kicks")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="more_help")],
+        [InlineKeyboardButton(text="✉️ Написать нам", callback_data="more_contact")],
+        [InlineKeyboardButton(text="⭐ PRO-подписка", callback_data="more_pro")],
+    ])
+    await message.answer("📋 Дополнительные функции:", reply_markup=kb)
+
+
+@router.callback_query(F.data == "more_weight")
+async def cb_more_weight(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    from app.bot.handlers_pro import cmd_weight
+    await cmd_weight(cb.message, state)
+
+
+@router.callback_query(F.data == "more_bp")
+async def cb_more_bp(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    from app.bot.handlers_pro import cmd_bp
+    await cmd_bp(cb.message, state)
+
+
+@router.callback_query(F.data == "more_kicks")
+async def cb_more_kicks(cb: CallbackQuery):
+    from app.bot.handlers_pro import AsyncSessionLocal, select, User, kick_svc
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    await cb.answer()
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
+        if not user:
+            await cb.message.answer("Ошибка. Нажмите /start")
+            return
+        active = await kick_svc.get_active_session(s, user.id)
+        if not active:
+            active = await kick_svc.start_session(s, user.id)
+        text = (
+            f"👶 Счётчик шевелений (Cardiff count-to-10)\n\n"
+            f"Считаем 10 шевелений за 2 часа. Сейчас: {active.kicks_count}/10\n"
+            "Нажимайте кнопку при каждом шевелении."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"👶 Шевеление ({active.kicks_count}/10)", callback_data="kick_add")],
+            [InlineKeyboardButton(text="✅ Завершить сессию", callback_data="kick_end")],
+        ])
+        await s.commit()
+    await cb.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "more_help")
+async def cb_more_help(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await help_button(cb.message, state)
+
+
+@router.callback_query(F.data == "more_contact")
+async def cb_more_contact(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await support_button(cb.message, state)
+
+
+@router.callback_query(F.data == "more_pro")
+async def cb_more_pro(cb: CallbackQuery):
+    from app.bot.handlers_pro import AsyncSessionLocal, select, User, sub_svc, _pro_menu_kb
+
+    await cb.answer()
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
+        if not user:
+            await cb.message.answer("Ошибка. Нажмите /start")
+            return
+        status_text = sub_svc.subscription_status_text(user)
+        await s.commit()
+
+    text = (
+        "⭐ **PRO-подписка**\n\n"
+        f"{status_text}\n\n"
+        "Выберите действие ниже:"
+    )
+    await cb.message.answer(text, reply_markup=_pro_menu_kb(), parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "more_bp")
+async def cb_more_bp(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    from app.bot.handlers_pro import cmd_bp
+    await cmd_bp(cb.message, state)
+
+
+@router.callback_query(F.data == "more_kicks")
 @router.message(F.text == "❓ Помощь", StateFilter("*"))
 async def help_button(message: Message, state: FSMContext):
     await state.clear()
@@ -764,9 +844,17 @@ async def help_button(message: Message, state: FSMContext):
         "💉 **Инсулин** — записать дозу и тип (короткий/длинный).\n\n"
         "📊 **Мой дневник** — просмотр записей, статистика, выгрузка Excel для врача.\n\n"
         "⏰ Можно вносить данные задним числом — бот спросит время.\n\n"
+        "💬 **Спросить Милу** — вопросы о питании при ГСД.\n\n"
+        "⭐ **PRO** — подписка, пробный период, приглашение подруги.\n\n"
+        "🆘 **Если что-то подвисло** — отправьте /start, "
+        "бот сбросит текущий шаг и вернёт меню.\n\n"
         "📎 **Команды:**\n"
+        "/start — сброс и главное меню\n"
         "/mystats — моя статистика за неделю\n"
-        "/help — эта подсказка\n"
+        "/ask — спросить Милу\n"
+        "/analysis — AI-анализ недели (PRO)\n"
+        "/pro — подписка\n"
+        "/help — эта подсказка\n\n"
         "✉️ **Написать нам** — связь с поддержкой",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
@@ -853,24 +941,75 @@ async def cmd_reply(message: Message):
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
 
-# More menu
-@router.message(F.text == "📋 Ещё", StateFilter("*"))
-async def more_button(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("📋 Дополнительное меню:", reply_markup=get_more_keyboard())
-
-@router.message(F.text == "⬅️ Назад", StateFilter("*"))
-async def back_button(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Главное меню:", reply_markup=get_main_keyboard())
-
 dp.include_router(router)
 
 # PRO features router
 from app.bot.handlers_pro import pro_router  # noqa: E402
 dp.include_router(pro_router)
 
-# Recipes router
-from app.bot.handlers_recipes import router as recipes_router  # noqa: E402
-dp.include_router(recipes_router)
 
+# TEST: n8n webhook test
+@router.message(Command("test_n8n"))
+async def cmd_test_n8n(message: Message):
+    """Test n8n webhook connectivity"""
+    from app.config import settings
+    import httpx
+    
+    if not settings.N8N_WEBHOOK_URL:
+        await message.answer("❌ N8N_WEBHOOK_URL not configured")
+        return
+    
+    test_payload = {
+        "task_id": 999,
+        "task_type": "test",
+        "user_id": message.from_user.id,
+        "callback_url": f"{settings.PUBLIC_BASE_URL}/api/v1/ai/callback" if settings.PUBLIC_BASE_URL else "",
+        "callback_token": settings.N8N_CALLBACK_TOKEN or "",
+        "data": {"message": "Test from bot", "user": message.from_user.full_name}
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(settings.N8N_WEBHOOK_URL, json=test_payload)
+            status = r.status_code
+            text = r.text[:200] if r.text else "(empty)"
+        
+        await message.answer(
+            f"✅ n8n webhook test\n"
+            f"URL: {settings.N8N_WEBHOOK_URL}\n"
+            f"Status: {status}\n"
+            f"Response: {text}"
+        )
+    except Exception as e:
+        await message.answer(f"❌ n8n test failed:\n{str(e)[:200]}")
+
+# Catch-all: any text message -> n8n for chat
+@router.message(F.text, ~F.text.startswith("/"), ~F.text.in_(MENU_BUTTONS), StateFilter(None))
+async def handle_any_text(message: Message):
+    """Route any unhandled text to n8n for chat (level 0 - cheap model)"""
+    if not message.text:
+        return
+    
+    from app.services import ai_client
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.tg_id == message.from_user.id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await message.answer("Нажмите /start для регистрации")
+            return
+        
+        # Build context for n8n
+        context = {
+            "user_name": user.full_name,
+            "user_id": user.id,
+            "message_text": message.text,}
+        
+        # Send to n8n for cheap model response
+        placeholder = await message.answer("⏳ Обрабатываю...", parse_mode=None)
+        await ai_client.chat_query(
+            session, user.id, message.text, context,
+            placeholder_message_id=placeholder.message_id,
+        )
+        await session.commit()

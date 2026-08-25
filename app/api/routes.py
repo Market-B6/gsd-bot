@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.models import (
     User, Meal, GlucoseReading, InsulinDose, AITask, Doctor, DoctorPatient,
-    WeightEntry, BPEntry, GlucoseType,
+    WeightEntry, BPEntry, KickSession, GlucoseType,
 )
 from app.config import settings
 
@@ -59,6 +59,7 @@ async def ai_callback(
         try:
             from app.bot.handlers import bot
             if user:
+                await _delete_placeholder(task, user)
                 text = _format_ai_result(task.task_type, body.result)
                 if text:
                     await bot.send_message(user.tg_id, text, parse_mode="Markdown")
@@ -80,6 +81,22 @@ async def ai_callback(
             logger.exception("Failed to deliver AI failure notice for task %s", task.id)
 
     return {"ok": True}
+
+
+async def _delete_placeholder(task: AITask, user: User) -> None:
+    """Drop the "processing" stub so only the real answer stays in the chat."""
+    try:
+        mid = (json.loads(task.input_data) if task.input_data else {}).get("placeholder_message_id")
+    except (ValueError, TypeError):
+        mid = None
+    if not mid:
+        return
+    try:
+        from app.bot.handlers import bot
+        await bot.delete_message(user.tg_id, mid)
+    except Exception:
+        # Already deleted by the user, or older than Telegram allows — not fatal.
+        logger.debug("Placeholder %s gone for task %s", mid, task.id)
 
 
 def _format_ai_result(task_type: str, result: dict) -> str:
@@ -159,6 +176,20 @@ async def internal_user_diary(
     insulin = (await db.execute(
         select(InsulinDose).where(InsulinDose.user_id == user_id, InsulinDose.datetime >= start)
     )).scalars().all()
+    weights = (await db.execute(
+        select(WeightEntry).where(WeightEntry.user_id == user_id, WeightEntry.datetime >= start)
+        .order_by(WeightEntry.datetime)
+    )).scalars().all()
+    bps = (await db.execute(
+        select(BPEntry).where(BPEntry.user_id == user_id, BPEntry.datetime >= start)
+    )).scalars().all()
+    kicks = (await db.execute(
+        select(KickSession).where(
+            KickSession.user_id == user_id,
+            KickSession.start_time >= start,
+            KickSession.end_time.isnot(None),
+        )
+    )).scalars().all()
     return {
         "glucose": [
             {"datetime": g.datetime.isoformat(), "value": g.value, "type": g.type.value, "is_normal": g.is_normal}
@@ -168,6 +199,28 @@ async def internal_user_diary(
         "insulin": [
             {"datetime": i.datetime.isoformat(), "units": i.units, "type": i.type.value}
             for i in insulin
+        ],
+        "weight": [
+            {"datetime": w.datetime.isoformat(), "kg": w.weight_kg}
+            for w in weights
+        ],
+        "blood_pressure": [
+            {
+                "datetime": b.datetime.isoformat(),
+                "systolic": b.systolic,
+                "diastolic": b.diastolic,
+                "pulse": b.pulse,
+                "is_alert": bool(b.is_alert),
+            }
+            for b in bps
+        ],
+        "kicks": [
+            {
+                "start_time": k.start_time.isoformat(),
+                "kicks_count": k.kicks_count,
+                "is_alert": bool(k.is_alert),
+            }
+            for k in kicks
         ],
     }
 

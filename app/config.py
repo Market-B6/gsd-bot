@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # AI — via vibecode (OpenAI-compatible gateway), called directly OR via n8n
     VIBECODE_API_KEY: Optional[str] = None
+    SPOONACULAR_API_KEY: Optional[str] = None
     VIBECODE_BASE_URL: str = "https://vibecode-api.online/v1"
     AI_MODEL: str = "claude-sonnet-5"
     AI_MODEL_FALLBACK: str = "claude-haiku-4-5-20251001"  # used on 429 from primary
@@ -39,7 +40,7 @@ class Settings(BaseSettings):
     # Payments — Telegram Stars (primary)
     STARS_ENABLED: bool = True
     # Prices in Stars (XTR)
-    PRICE_SUB_MONTHLY_XTR: int = 149      # ~ 300 RUB
+    PRICE_SUB_MONTHLY_XTR: int = 175      # ~ 299 RUB
     PRICE_SUB_YEARLY_XTR: int = 1290      # ~ 2600 RUB (7 mo. discount)
     PRICE_PDF_REPORT_XTR: int = 49
     PRICE_AI_PHOTO_PACK_XTR: int = 79     # 50 photos
@@ -53,7 +54,9 @@ class Settings(BaseSettings):
 
     # Quotas — FREE tier
     FREE_PDF_PER_MONTH: int = 1
-    FREE_AI_PHOTOS_PER_MONTH: int = 3
+    FREE_AI_PHOTOS_PER_MONTH: int = 5
+    FREE_AI_CHAT_PER_MONTH: int = 10
+    PRO_AI_PHOTOS_PER_MONTH: int = 100
     FREE_HISTORY_DAYS: int = 7
     FREE_RECIPES_COUNT: int = 10
 

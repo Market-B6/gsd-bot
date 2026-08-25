@@ -82,7 +82,6 @@ async def create_stars_invoice(
         provider_token="",  # Stars: empty
         currency="XTR",
         prices=[LabeledPrice(label=meta["title"], amount=meta["price_xtr"])],
-        start_parameter=product.value,
     )
 
 

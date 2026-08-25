@@ -6,6 +6,9 @@ from app.config import settings
 
 
 def is_pro(user: User) -> bool:
+    from app.config import settings
+    if user.tg_id == settings.ADMIN_TG_ID:
+        return True
     if user.subscription_tier != SubscriptionTier.PRO:
         return False
     if user.subscription_expires_at is None:
@@ -17,6 +20,7 @@ def _reset_quota_if_needed(user: User) -> None:
     now = datetime.now()
     if user.quota_reset_at is None or user.quota_reset_at < now:
         user.ai_photos_used_month = 0
+        user.ai_chat_used_month = 0
         user.pdf_reports_used_month = 0
         # next reset in 30 days
         user.quota_reset_at = now + timedelta(days=30)
@@ -39,6 +43,21 @@ async def consume_ai_photo(session: AsyncSession, user: User) -> None:
         user.ai_photos_extra -= 1
     else:
         user.ai_photos_used_month += 1
+
+
+async def can_use_ai_chat(session: AsyncSession, user: User) -> bool:
+    _reset_quota_if_needed(user)
+    if is_pro(user):
+        return True
+    limit = settings.FREE_AI_CHAT_PER_MONTH
+    return user.ai_chat_used_month < limit
+
+
+async def consume_ai_chat(session: AsyncSession, user: User) -> None:
+    _reset_quota_if_needed(user)
+    if is_pro(user):
+        return
+    user.ai_chat_used_month += 1
 
 
 async def can_use_pdf(session: AsyncSession, user: User) -> bool:
@@ -101,8 +120,20 @@ async def grant_referral_reward(session: AsyncSession, user: User) -> None:
 
 def subscription_status_text(user: User) -> str:
     if is_pro(user):
-        exp = user.subscription_expires_at.strftime('%d.%m.%Y')
-        return f"⭐ PRO активна до {exp}"
+        exp_dt = user.subscription_expires_at
+        if exp_dt is None:
+            return "⭐ PRO активна (бессрочно)"
+        return f"⭐ PRO активна до {exp_dt.strftime('%d.%m.%Y')}"
+    photos_left = max(
+        0,
+        settings.FREE_AI_PHOTOS_PER_MONTH
+        + (user.ai_photos_extra or 0)
+        - (user.ai_photos_used_month or 0),
+    )
+    chat_left = max(
+        0, settings.FREE_AI_CHAT_PER_MONTH - (user.ai_chat_used_month or 0)
+    )
+    quota = f"\n📸 Фото: {photos_left} · 💬 Сообщений Миле: {chat_left}"
     if user.trial_used:
-        return "🆓 Бесплатный тариф (пробный период использован)"
-    return "🆓 Бесплатный тариф · доступен пробный период 7 дней"
+        return "🆓 Бесплатный тариф (пробный период использован)" + quota
+    return "🆓 Бесплатный тариф · доступен пробный период 7 дней" + quota

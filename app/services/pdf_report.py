@@ -17,7 +17,8 @@ from reportlab.platypus import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
-    User, Meal, GlucoseReading, InsulinDose, WeightEntry, BPEntry, GlucoseType,
+    User, Meal, GlucoseReading, InsulinDose, WeightEntry, BPEntry,
+    KickSession, GlucoseType,
 )
 
 
@@ -60,6 +61,14 @@ async def generate_pdf_report(session: AsyncSession, user: User, days: int = 28)
     bps = (await session.execute(
         select(BPEntry).where(BPEntry.user_id == user.id, BPEntry.datetime >= start)
         .order_by(BPEntry.datetime)
+    )).scalars().all()
+
+    kicks = (await session.execute(
+        select(KickSession).where(
+            KickSession.user_id == user.id,
+            KickSession.start_time >= start,
+            KickSession.end_time.isnot(None),
+        ).order_by(KickSession.start_time)
     )).scalars().all()
 
     font, font_bold = _register_fonts()
@@ -182,13 +191,39 @@ async def generate_pdf_report(session: AsyncSession, user: User, days: int = 28)
                 ))
         story.append(Spacer(1, 0.5*cm))
 
-    # Meals summary
-    if meals:
-        story.append(Paragraph("Питание", h2))
+    if kicks:
+        low = [k for k in kicks if k.is_alert]
+        story.append(Paragraph("Шевеления плода", h2))
         story.append(Paragraph(
-            f"Записано приёмов пищи: {len(meals)}. Среднее в день: {len(meals)/max(days,1):.1f}",
+            f"Завершённых сессий подсчёта: {len(kicks)}. "
+            f"Из них менее 10 шевелений за 2 часа: <b>{len(low)}</b>",
             normal,
         ))
+        if low:
+            dates = ", ".join(k.start_time.strftime("%d.%m") for k in low[:10])
+            story.append(Paragraph(f"Даты со снижением активности: {dates}", normal))
+            story.append(Paragraph("Требуется оценка состояния плода.", normal))
+        story.append(Spacer(1, 0.5*cm))
+
+    # Meals summary
+    if meals:
+        meal_days = len({m.datetime.date() for m in meals})
+        per_active_day = len(meals) / max(meal_days, 1)
+        story.append(Paragraph("Питание", h2))
+        story.append(Paragraph(
+            f"Записано приёмов пищи: <b>{len(meals)}</b>. "
+            f"Записи велись {meal_days} дн. из {days}.",
+            normal,
+        ))
+        story.append(Paragraph(
+            f"В дни с записями — в среднем {per_active_day:.1f} приёма пищи в день.",
+            normal,
+        ))
+        if meal_days < days / 2:
+            story.append(Paragraph(
+                "Дневник заполнен неполно — данные могут не отражать обычный рацион.",
+                normal,
+            ))
 
     doc.build(story)
     out.seek(0)
