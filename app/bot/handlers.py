@@ -669,6 +669,8 @@ async def diary_button(message: Message, state: FSMContext):
 async def diary_stats(callback: CallbackQuery):
     from app.services.user_stats import get_user_stats
 
+    await callback.answer()
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == callback.from_user.id))
         user = result.scalar_one_or_none()
@@ -679,11 +681,12 @@ async def diary_stats(callback: CallbackQuery):
 
         text = await get_user_stats(session, user)
         await callback.message.edit_text(text, parse_mode="Markdown")
-    await callback.answer()
 
 @router.callback_query(F.data == "diary_today")
 async def diary_today(callback: CallbackQuery):
     from app.services.export import generate_diary_text
+
+    await callback.answer()
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == callback.from_user.id))
@@ -695,11 +698,12 @@ async def diary_today(callback: CallbackQuery):
 
         text = await generate_diary_text(session, user, days=1)
         await callback.message.edit_text(text, parse_mode="Markdown")
-    await callback.answer()
 
 @router.callback_query(F.data == "diary_week")
 async def diary_week(callback: CallbackQuery):
     from app.services.export import generate_diary_text
+
+    await callback.answer()
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == callback.from_user.id))
@@ -711,12 +715,15 @@ async def diary_week(callback: CallbackQuery):
 
         text = await generate_diary_text(session, user, days=7)
         await callback.message.edit_text(text, parse_mode="Markdown")
-    await callback.answer()
 
 @router.callback_query(F.data == "diary_excel")
 async def diary_excel(callback: CallbackQuery):
     from app.services.export import generate_excel_export
     from aiogram.types import BufferedInputFile
+
+    # Выгрузка за 14 дней собирается несколько секунд — гасим крутилку сразу
+    # и показываем, что работа идёт.
+    await callback.answer("Собираю выгрузку…")
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == callback.from_user.id))
@@ -734,7 +741,6 @@ async def diary_excel(callback: CallbackQuery):
             caption="📎 Дневник ГСД за 2 недели для врача"
         )
         await callback.message.edit_text("📊 Выгрузка готова ⬇️")
-    await callback.answer()
 
 # Help for users
 @router.message(F.text == "📋 Ещё", StateFilter("*"))
@@ -835,14 +841,6 @@ async def cb_more_pro(cb: CallbackQuery):
     await cb.message.answer(text, reply_markup=_pro_menu_kb(), parse_mode="Markdown")
 
 
-@router.callback_query(F.data == "more_bp")
-async def cb_more_bp(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    from app.bot.handlers_pro import cmd_bp
-    await cmd_bp(cb.message, state)
-
-
-@router.callback_query(F.data == "more_kicks")
 @router.message(F.text == "❓ Помощь", StateFilter("*"))
 async def help_button(message: Message, state: FSMContext):
     await state.clear()

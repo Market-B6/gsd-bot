@@ -94,8 +94,33 @@ async def cmd_pro(message: Message):
 
 @pro_router.callback_query(F.data == "pro_menu")
 async def cb_pro_menu(cb: CallbackQuery):
-    await cb.message.edit_reply_markup(reply_markup=_pro_menu_kb())
     await cb.answer()
+    await cb.message.edit_reply_markup(reply_markup=_pro_menu_kb())
+
+
+@pro_router.callback_query(F.data == "subscribe_pro")
+async def cb_subscribe_pro(cb: CallbackQuery):
+    """Кнопка «Оформить PRO» из заглушек платных рецептов.
+
+    Экран отправляем новым сообщением, а не правкой: заглушка приходит вместо
+    карточки рецепта, и edit_reply_markup оставил бы текст «рецепт только по
+    подписке» с меню PRO под ним.
+    """
+    await cb.answer()
+
+    async with AsyncSessionLocal() as s:
+        user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
+        if not user:
+            await cb.message.answer("Ошибка. Нажмите /start")
+            return
+        status_text = sub_svc.subscription_status_text(user)
+        await s.commit()
+
+    await cb.message.answer(
+        f"⭐ **PRO-подписка**\n\n{status_text}\n\nВыберите действие ниже:",
+        reply_markup=_pro_menu_kb(),
+        parse_mode="Markdown",
+    )
 
 
 @pro_router.callback_query(F.data == "shop")
@@ -111,16 +136,18 @@ async def cb_trial(cb: CallbackQuery):
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
         if not user:
+            await cb.answer("Ошибка. Нажмите /start", show_alert=True)
             return
         ok = await sub_svc.start_trial(s, user)
         await s.commit()
-    if ok:
-        await cb.message.answer(
-            f"🎉 Пробный период на {settings.TRIAL_DAYS} дней активирован!\n"
-            "Все PRO-функции открыты."
-        )
-    else:
+    if not ok:
         await cb.answer("Пробный период уже использован", show_alert=True)
+        return
+    await cb.answer()
+    await cb.message.answer(
+        f"🎉 Пробный период на {settings.TRIAL_DAYS} дней активирован!\n"
+        "Все PRO-функции открыты."
+    )
 
 
 # ---------- Buy via Stars ----------
@@ -322,6 +349,8 @@ async def cb_kick_add(cb: CallbackQuery):
 
 @pro_router.callback_query(F.data == "kick_end")
 async def cb_kick_end(cb: CallbackQuery):
+    await cb.answer()
+
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
         active = await kick_svc.get_active_session(s, user.id) if user else None
@@ -365,6 +394,7 @@ async def cb_recipes(cb: CallbackQuery):
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one_or_none()
         if not user:
+            await cb.answer("Ошибка. Нажмите /start", show_alert=True)
             return
         items = await rec_svc.list_recipes(s, user, category=category, limit=5)
     if not items:
@@ -382,10 +412,17 @@ async def cb_recipes(cb: CallbackQuery):
 @pro_router.callback_query(F.data == "referral")
 @pro_router.message(Command("invite"))
 async def cmd_invite(event, state: FSMContext = None):
+    # Вешается и на колбэк «referral», и на /invite — крутилку гасим сразу,
+    # иначе при раннем выходе Telegram держит загрузку до таймаута.
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
     tg_id = event.from_user.id
     async with AsyncSessionLocal() as s:
         user = (await s.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
         if not user:
+            target = event.message if isinstance(event, CallbackQuery) else event
+            await target.answer("Ошибка. Нажмите /start")
             return
         code = await ref_svc.ensure_code(s, user)
         await s.commit()
