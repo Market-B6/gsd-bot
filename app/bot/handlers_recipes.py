@@ -201,6 +201,8 @@ async def show_recipe_card(callback: CallbackQuery, recipe: Recipe,
 @router.callback_query(F.data.startswith("recipe_full_"))
 async def recipe_full(callback: CallbackQuery):
     """Полный текст рецепта отдельным сообщением — под фото он не влезает."""
+    await callback.answer()  # Убираем крутилку сразу
+
     parts = callback.data.split("_")
     recipe_id, category = int(parts[2]), parts[3]
 
@@ -208,11 +210,10 @@ async def recipe_full(callback: CallbackQuery):
         recipe = await session.get(Recipe, recipe_id)
 
     if not recipe:
-        await callback.answer("Рецепт не найден", show_alert=True)
+        await callback.message.answer("⚠️ Рецепт не найден", parse_mode="Markdown")
         return
 
     await callback.message.answer(format_recipe_card(recipe), parse_mode="Markdown")
-    await callback.answer()
 
 
 @router.message(F.text == "📖 Рецепты", StateFilter("*"))
@@ -251,6 +252,8 @@ async def recipes_button(message: Message, state: FSMContext):
 @router.callback_query(F.data == "recipes_categories")
 async def recipes_categories_callback(callback: CallbackQuery):
     """Возврат к списку категорий."""
+    await callback.answer()
+
     async with AsyncSessionLocal() as session:
         counts = {}
         for cat in ["breakfast", "snack", "lunch", "dinner"]:
@@ -276,12 +279,13 @@ async def recipes_categories_callback(callback: CallbackQuery):
     )
 
     await replace_message(callback, text, get_categories_keyboard())
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("recipes_cat_"))
 async def recipes_category(callback: CallbackQuery):
     """Показываем первый рецепт из категории."""
+    await callback.answer()
+
     category = callback.data.split("_")[-1]  # breakfast/snack/lunch/dinner
 
     async with AsyncSessionLocal() as session:
@@ -332,12 +336,13 @@ async def recipes_category(callback: CallbackQuery):
         has_next = next_result.scalar_one_or_none() is not None
 
     await show_recipe_card(callback, recipe, False, has_next, category)
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("recipe_next_"))
 async def recipe_next(callback: CallbackQuery):
     """Следующий рецепт в категории."""
+    await callback.answer()
+
     _, _, current_id, category = callback.data.split("_")
     current_id = int(current_id)
 
@@ -399,12 +404,13 @@ async def recipe_next(callback: CallbackQuery):
         has_next = next_result.scalar_one_or_none() is not None
 
     await show_recipe_card(callback, recipe, has_prev, has_next, category)
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("recipe_prev_"))
 async def recipe_prev(callback: CallbackQuery):
     """Предыдущий рецепт в категории."""
+    await callback.answer()
+
     _, _, current_id, category = callback.data.split("_")
     current_id = int(current_id)
 
@@ -466,7 +472,6 @@ async def recipe_prev(callback: CallbackQuery):
         has_next = next_result.scalar_one_or_none() is not None
 
     await show_recipe_card(callback, recipe, has_prev, has_next, category)
-    await callback.answer()
 
 
 @router.callback_query(F.data == "recipes_back")
