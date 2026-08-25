@@ -1,5 +1,6 @@
 """Обработчики для раздела Рецепты."""
 import logging
+from functools import wraps
 from pathlib import Path
 
 from aiogram import Router, F
@@ -7,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile,
+    InputMediaPhoto,
 )
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, func
@@ -166,39 +168,81 @@ async def replace_message(callback: CallbackQuery, text: str,
         await callback.message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
+# Telegram отдаёт file_id на каждую загруженную картинку и умеет принимать его
+# вместо файла. Первое листание грузит ~50 КБ с диска, дальше идёт только строка,
+# поэтому карточка открывается мгновенно. Живёт до перезапуска процесса, при
+# промахе просто заново читаем файл — инвалидация не нужна.
+_photo_cache: dict[int, str] = {}
+
+# Пока листание отвечало долго, пользователь успевал нажать стрелку второй раз —
+# приходили два колбэка с одинаковым current_id и открывали рецепт дважды.
+# Держим множество занятых чатов: второй тап отбрасываем, пока не ответили на первый.
+_busy_chats: set[int] = set()
+
+
+def guard_double_tap(handler):
+    """Отбрасывает повторный тап по инлайн-кнопке, пока обрабатывается предыдущий."""
+    @wraps(handler)
+    async def wrapper(callback: CallbackQuery):
+        chat_id = callback.message.chat.id
+        if chat_id in _busy_chats:
+            await callback.answer()  # гасим крутилку и молча выходим
+            return
+        _busy_chats.add(chat_id)
+        try:
+            return await handler(callback)
+        finally:
+            _busy_chats.discard(chat_id)
+
+    return wrapper
+
+
 async def show_recipe_card(callback: CallbackQuery, recipe: Recipe,
                            has_prev: bool, has_next: bool, category: str):
     """Показывает карточку: фото + компактная подпись, полный текст — по кнопке.
 
-    edit_text не умеет превратить текстовое сообщение в фото, поэтому при наличии
-    файла старое сообщение удаляется и отправляется новое с картинкой.
-    Если фото нет или Telegram его не принял — остаётся текстовый вид.
+    Листание правит картинку у текущего сообщения (edit_media), а не пересоздаёт его:
+    сообщение не «прыгает» в конец чата и не мигает. Пересоздание нужно только
+    при переходе с текстового сообщения на фото — превратить текст в фото
+    Telegram не умеет.
     """
     photo_path = Path(recipe.photo_url) if recipe.photo_url else None
 
     if photo_path and photo_path.is_file():
         keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category,
                                             with_full=True)
+        caption = format_recipe_short(recipe)
+        photo = _photo_cache.get(recipe.id) or FSInputFile(photo_path)
         try:
-            await callback.message.answer_photo(
-                FSInputFile(photo_path),
-                caption=format_recipe_short(recipe),
-                parse_mode="Markdown",
-                reply_markup=keyboard,
-            )
-            try:
-                await callback.message.delete()
-            except TelegramBadRequest:
-                pass  # сообщение старше 48 часов — Telegram удалять не даёт
+            if callback.message.photo:
+                sent = await callback.message.edit_media(
+                    InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"),
+                    reply_markup=keyboard,
+                )
+            else:
+                sent = await callback.message.answer_photo(
+                    photo, caption=caption, parse_mode="Markdown", reply_markup=keyboard,
+                )
+                try:
+                    await callback.message.delete()
+                except TelegramBadRequest:
+                    pass  # сообщение старше 48 часов — Telegram удалять не даёт
+            # Ответ на edit_media при отключённой правке может прийти как True
+            if getattr(sent, "photo", None):
+                _photo_cache[recipe.id] = sent.photo[-1].file_id
             return
         except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                return
             logger.warning("Фото рецепта %s не отправилось (%s), показываю текст", recipe.id, e)
+            _photo_cache.pop(recipe.id, None)  # возможно, file_id устарел
 
     keyboard = get_recipe_card_keyboard(recipe.id, has_prev, has_next, category)
     await replace_message(callback, format_recipe_card(recipe), keyboard)
 
 
 @router.callback_query(F.data.startswith("recipe_full_"))
+@guard_double_tap
 async def recipe_full(callback: CallbackQuery):
     """Полный текст рецепта отдельным сообщением — под фото он не влезает."""
     await callback.answer()  # Убираем крутилку сразу
@@ -282,6 +326,7 @@ async def recipes_categories_callback(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("recipes_cat_"))
+@guard_double_tap
 async def recipes_category(callback: CallbackQuery):
     """Показываем первый рецепт из категории."""
     await callback.answer()
@@ -339,6 +384,7 @@ async def recipes_category(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("recipe_next_"))
+@guard_double_tap
 async def recipe_next(callback: CallbackQuery):
     """Следующий рецепт в категории."""
     await callback.answer()
@@ -407,6 +453,7 @@ async def recipe_next(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("recipe_prev_"))
+@guard_double_tap
 async def recipe_prev(callback: CallbackQuery):
     """Предыдущий рецепт в категории."""
     await callback.answer()
